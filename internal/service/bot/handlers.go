@@ -15,7 +15,7 @@ import (
 
 const topLimit = 10
 
-const roundTime = 15 * time.Second
+const roundTime = 2 * time.Minute
 
 type voteFunc func(userID int64, v bool)
 
@@ -56,9 +56,13 @@ func (m *MeBot) registerHandlers() {
 func (m *MeBot) handlerHelp(c telebot.Context) error {
 	_, err := c.Bot().Reply(c.Message(),
 		"Список команд:\n"+
-			"/round - запуск нового раунда\n"+
-			"/top - топ 10 играков\n"+
-			telebot.ModeMarkdown)
+			"\t/round - запуск нового раунда\n"+
+			"\t/top - топ 10 играков\n"+
+			"\nДля добавления вопроса:\n"+
+			"\t- получить свой ID отправив боту в личку команду /id\n"+
+			"\t- попросите владельца добавить ваш id для достука к добавлению вопроса\n"+
+			"\t- добавте вопрос отправив боту в личку \"/question <ваш вопрос>\"",
+		telebot.ModeMarkdown)
 
 	return err
 }
@@ -102,12 +106,17 @@ func (m *MeBot) handlerQuestion(c telebot.Context) error {
 		return nil
 	}
 
+	if len(c.Args()) == 0 {
+		return c.Send("отправте вопрос в формате \"/question <ваш вопрос>\"")
+	}
+
 	question := strings.Join(c.Args(), " ")
 
 	keyboard := &telebot.ReplyMarkup{}
 	row := telebot.Row{
 		keyboard.Data("Правда", "answer", "1", question, c.Message().Sender.Recipient()),
 		keyboard.Data("Ложь", "answer", "0", question, c.Message().Sender.Recipient()),
+		keyboard.Data("Отмена", "answer", "cancel"),
 	}
 	keyboard.Inline(row)
 
@@ -117,6 +126,10 @@ func (m *MeBot) handlerQuestion(c telebot.Context) error {
 func (m *MeBot) handlerAnswer(c telebot.Context) error {
 	if err := c.Bot().Delete(c.Message()); err != nil {
 		log.Error("delete message question", zap.Error(err))
+	}
+
+	if c.Data() == "cancel" {
+		return nil
 	}
 
 	data := strings.Split(c.Data(), "|")
