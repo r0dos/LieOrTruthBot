@@ -36,6 +36,7 @@ func (m *MeBot) registerHandlers() {
 
 	// Command: /question
 	m.bot.Handle("/question", m.handlerQuestion)
+	m.bot.Handle(telebot.OnText, m.handlerOnText)
 	m.bot.Handle("\fanswer", m.handlerAnswer)
 
 	groupOnly := m.bot.Group()
@@ -49,7 +50,7 @@ func (m *MeBot) registerHandlers() {
 	m.bot.Handle("\fvote", m.handlerVote)
 
 	//Command: /help
-	groupOnly.Handle("/help", m.handlerHelp)
+	m.bot.Handle("/help", m.handlerHelp)
 
 }
 
@@ -59,9 +60,8 @@ func (m *MeBot) handlerHelp(c telebot.Context) error {
 			" /round - запуск нового раунда\n"+
 			" /top - топ 10 игроков\n"+
 			"\nДля добавления вопроса:\n"+
-			" - получить свой ID отправив боту в личку команду /id\n"+
 			" - попросите владельца добавить ваш id для достука к добавлению вопроса\n"+
-			" - добавте вопрос отправив боту в личку \"/question <ваш вопрос>\"",
+			" - добавте вопрос отправив боту в личку /question",
 		telebot.ModeMarkdown)
 
 	return err
@@ -78,6 +78,14 @@ func (m *MeBot) handlerID(c telebot.Context) error {
 func (m *MeBot) handlerAddAdmin(c telebot.Context) error {
 	if c.Message().Sender.ID != m.cfg.SuperUser {
 		return nil
+	}
+
+	if c.Message().FromGroup() && c.Message().ReplyTo != nil {
+		if err := m.storage.AddAdmin(c.Message().ReplyTo.Sender.ID); err != nil {
+			return fmt.Errorf("add admin storage: %v", err)
+		}
+
+		return c.Send(fmt.Sprintf("Добавил %s в список админов", getUsername(c.Message().ReplyTo.Sender)))
 	}
 
 	for _, item := range c.Args() {
@@ -106,21 +114,35 @@ func (m *MeBot) handlerQuestion(c telebot.Context) error {
 		return nil
 	}
 
-	if len(c.Args()) == 0 {
-		return c.Send("отправте вопрос в формате \"/question <ваш вопрос>\"")
+	m.mu.Lock()
+	m.waitQuestion[c.Message().Sender.ID] = struct{}{}
+	m.mu.Unlock()
+
+	return c.Send("Ожидаю вопрос в следующем сообщении")
+}
+
+func (m *MeBot) handlerOnText(c telebot.Context) error {
+	if c.Message().FromGroup() || c.Message().FromChannel() {
+		return nil
 	}
 
-	question := strings.Join(c.Args(), " ")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.waitQuestion[c.Message().Sender.ID]; !ok {
+		return nil
+	}
+
+	delete(m.waitQuestion, c.Message().Sender.ID)
 
 	keyboard := &telebot.ReplyMarkup{}
 	row := telebot.Row{
-		keyboard.Data("Правда", "answer", "1", question, c.Message().Sender.Recipient()),
-		keyboard.Data("Ложь", "answer", "0", question, c.Message().Sender.Recipient()),
+		keyboard.Data("Правда", "answer", "1", c.Message().Sender.Recipient()),
+		keyboard.Data("Ложь", "answer", "0", c.Message().Sender.Recipient()),
 		keyboard.Data("Отмена", "answer", "cancel"),
 	}
 	keyboard.Inline(row)
 
-	return c.Send(fmt.Sprintf("Какой правильный ответ на вопрос:\n\n%s", question), keyboard)
+	return c.Send(fmt.Sprintf("Какой правильный ответ на вопрос:\n\n%s", c.Message().Text), keyboard)
 }
 
 func (m *MeBot) handlerAnswer(c telebot.Context) error {
@@ -134,7 +156,7 @@ func (m *MeBot) handlerAnswer(c telebot.Context) error {
 
 	data := strings.Split(c.Data(), "|")
 
-	if len(data) < 3 {
+	if len(data) < 2 {
 		return c.Send("что-то пошло не так...")
 	}
 
@@ -145,13 +167,19 @@ func (m *MeBot) handlerAnswer(c telebot.Context) error {
 		return c.Send("что-то пошло не так...")
 	}
 
-	if err := m.storage.AddQuestion(data[1], boolValue, data[2]); err != nil {
+	question := strings.ReplaceAll(c.Message().Text, "Какой правильный ответ на вопрос:\n\n", "")
+	answer := "Ложь"
+	if boolValue {
+		answer = "Правда"
+	}
+
+	if err := m.storage.AddQuestion(question, boolValue, data[1]); err != nil {
 		log.Error("add question", zap.Error(err))
 
 		return c.Send("что-то пошло не так...")
 	}
 
-	return c.Send("вопрос добавлен")
+	return c.Send(fmt.Sprintf("Добавлен вопрос:\n\n%s\n\nПравильный ответ: %s", question, answer))
 }
 
 func (m *MeBot) handlerTop(c telebot.Context) error {

@@ -21,19 +21,21 @@ type Storage interface {
 }
 
 type MeBot struct {
-	cfg     *config.Config
-	bot     *telebot.Bot
-	storage Storage
-	rounds  map[int64]*entry
-	mu      sync.RWMutex
+	cfg          *config.Config
+	bot          *telebot.Bot
+	storage      Storage
+	rounds       map[int64]*entry
+	waitQuestion map[int64]struct{}
+	mu           sync.RWMutex
 }
 
 func NewMeBot(cfg *config.Config, b *telebot.Bot, s Storage) *MeBot {
 	me := &MeBot{
-		cfg:     cfg,
-		bot:     b,
-		storage: s,
-		rounds:  make(map[int64]*entry),
+		cfg:          cfg,
+		bot:          b,
+		storage:      s,
+		rounds:       make(map[int64]*entry),
+		waitQuestion: make(map[int64]struct{}),
 	}
 
 	me.registerMiddlewares()
