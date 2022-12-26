@@ -3,6 +3,7 @@ package bot
 import (
 	"LieOrTruthBot/pkg/log"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,46 +16,51 @@ import (
 
 const topLimit = 10
 
-const roundTime = 2 * time.Minute
+const roundTime = 30 * time.Second
 
 type voteFunc func(userID int64, v bool)
 
-type entry struct {
+type round struct {
 	cancel context.CancelFunc
 	vote   voteFunc
 }
 
-func (m *MeBot) registerHandlers() {
+func (l *LoTBot) registerHandlers() {
 	// Command: /ping
-	m.bot.Handle("/ping", m.handlerPong)
+	l.bot.Handle("/ping", l.handlerPong)
+
+	pmOnly := l.bot.Group()
+	pmOnly.Use(middlewareFromPM)
 
 	// Command: /id
-	m.bot.Handle("/id", m.handlerID)
+	pmOnly.Handle("/id", l.handlerID)
 
 	// Command: /admin
-	m.bot.Handle("/admin", m.handlerAddAdmin)
+	pmOnly.Handle("/admin", l.handlerAddAdmin)
 
 	// Command: /question
-	m.bot.Handle("/question", m.handlerQuestion)
-	m.bot.Handle(telebot.OnText, m.handlerOnText)
-	m.bot.Handle("\fanswer", m.handlerAnswer)
+	pmOnly.Handle("/question", l.handlerQuestion)
+	pmOnly.Handle(telebot.OnText, l.handlerOnText)
+	pmOnly.Handle("\fcancel", l.handlerCancel)
+	pmOnly.Handle("\fanswer", l.handlerAnswer)
+	pmOnly.Handle("\fadd", l.handlerAdd)
+	pmOnly.Handle("\fdetailed", l.handlerDetailed)
 
-	groupOnly := m.bot.Group()
+	groupOnly := l.bot.Group()
 	groupOnly.Use(middlewareFromGroup)
 
 	//Command: /top
-	groupOnly.Handle("/top", m.handlerTop)
+	groupOnly.Handle("/top", l.handlerTop)
 
 	//Command: /round
-	groupOnly.Handle("/round", m.handlerRound)
-	m.bot.Handle("\fvote", m.handlerVote)
+	groupOnly.Handle("/round", l.handlerRound)
+	l.bot.Handle("\fvote", l.handlerVote)
 
 	//Command: /help
-	m.bot.Handle("/help", m.handlerHelp)
-
+	l.bot.Handle("/help", l.handlerHelp)
 }
 
-func (m *MeBot) handlerHelp(c telebot.Context) error {
+func (l *LoTBot) handlerHelp(c telebot.Context) error {
 	_, err := c.Bot().Reply(c.Message(),
 		"Список команд:\n"+
 			" /round - запуск нового раунда\n"+
@@ -67,21 +73,21 @@ func (m *MeBot) handlerHelp(c telebot.Context) error {
 	return err
 }
 
-func (m *MeBot) handlerPong(c telebot.Context) error {
+func (l *LoTBot) handlerPong(c telebot.Context) error {
 	return c.Send("pong")
 }
 
-func (m *MeBot) handlerID(c telebot.Context) error {
+func (l *LoTBot) handlerID(c telebot.Context) error {
 	return c.Send(fmt.Sprintf("Your Telegram Chat ID is: %d", c.Chat().ID))
 }
 
-func (m *MeBot) handlerAddAdmin(c telebot.Context) error {
-	if c.Message().Sender.ID != m.cfg.SuperUser {
+func (l *LoTBot) handlerAddAdmin(c telebot.Context) error {
+	if c.Message().Sender.ID != l.cfg.SuperUser {
 		return nil
 	}
 
 	if c.Message().FromGroup() && c.Message().ReplyTo != nil {
-		if err := m.storage.AddAdmin(c.Message().ReplyTo.Sender.ID); err != nil {
+		if err := l.storage.AddAdmin(c.Message().ReplyTo.Sender.ID); err != nil {
 			return fmt.Errorf("add admin storage: %v", err)
 		}
 
@@ -96,7 +102,7 @@ func (m *MeBot) handlerAddAdmin(c telebot.Context) error {
 			continue
 		}
 
-		if err := m.storage.AddAdmin(n); err != nil {
+		if err := l.storage.AddAdmin(n); err != nil {
 			log.Error("add admin storage", zap.Error(err))
 		}
 	}
@@ -104,86 +110,144 @@ func (m *MeBot) handlerAddAdmin(c telebot.Context) error {
 	return nil
 }
 
-func (m *MeBot) handlerQuestion(c telebot.Context) error {
-	isAdmin, err := m.storage.CheckAdmin(c.Message().Sender.ID)
+func (l *LoTBot) handlerQuestion(c telebot.Context) error {
+	isAdmin, err := l.storage.CheckAdmin(c.Message().Sender.ID)
 	if err != nil {
 		return fmt.Errorf("check admin %v", err)
 	}
 
-	if !isAdmin && m.cfg.SuperUser != c.Message().Sender.ID {
+	if !isAdmin && l.cfg.SuperUser != c.Message().Sender.ID {
 		return nil
 	}
 
-	m.mu.Lock()
-	m.waitQuestion[c.Message().Sender.ID] = struct{}{}
-	m.mu.Unlock()
+	l.mu.Lock()
+	l.waitText[c.Message().Sender.ID] = &Entry{
+		Action: waitQuestion,
+	}
+	l.mu.Unlock()
 
 	return c.Send("Ожидаю вопрос в следующем сообщении")
 }
 
-func (m *MeBot) handlerOnText(c telebot.Context) error {
-	if c.Message().FromGroup() || c.Message().FromChannel() {
+func (l *LoTBot) handlerOnText(c telebot.Context) error {
+	l.mu.Lock()
+	act, ok := l.waitText[c.Message().Sender.ID]
+	l.mu.Unlock()
+
+	if !ok {
 		return nil
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.waitQuestion[c.Message().Sender.ID]; !ok {
-		return nil
+	switch act.Action {
+	case waitQuestion:
+		act.Question = c.Message().Text
+
+		keyboard := &telebot.ReplyMarkup{}
+		row := telebot.Row{
+			keyboard.Data("Правда", "answer", "1"),
+			keyboard.Data("Ложь", "answer", "0"),
+			keyboard.Data("Отмена", "cancel"),
+		}
+		keyboard.Inline(row)
+
+		return c.Send(fmt.Sprintf("Какой правильный ответ на вопрос:\n\n%s", c.Message().Text), keyboard)
+	case waitDetailed:
+		act.Detailed = c.Message().Text
+
+		keyboard := &telebot.ReplyMarkup{}
+		row := telebot.Row{
+			keyboard.Data("Добавить", "add"),
+			keyboard.Data("Отмена", "cancel"),
+		}
+		keyboard.Inline(row)
+
+		return c.Send(act.String(), keyboard)
+
+	default:
+		log.Error("untyped action")
 	}
 
-	delete(m.waitQuestion, c.Message().Sender.ID)
-
-	keyboard := &telebot.ReplyMarkup{}
-	row := telebot.Row{
-		keyboard.Data("Правда", "answer", "1", c.Message().Sender.Recipient()),
-		keyboard.Data("Ложь", "answer", "0", c.Message().Sender.Recipient()),
-		keyboard.Data("Отмена", "answer", "cancel"),
-	}
-	keyboard.Inline(row)
-
-	return c.Send(fmt.Sprintf("Какой правильный ответ на вопрос:\n\n%s", c.Message().Text), keyboard)
+	return nil
 }
 
-func (m *MeBot) handlerAnswer(c telebot.Context) error {
-	if err := c.Bot().Delete(c.Message()); err != nil {
-		log.Error("delete message question", zap.Error(err))
-	}
-
-	if c.Data() == "cancel" {
-		return nil
-	}
-
-	data := strings.Split(c.Data(), "|")
-
-	if len(data) < 2 {
-		return c.Send("что-то пошло не так...")
-	}
-
-	boolValue, err := strconv.ParseBool(data[0])
+func (l *LoTBot) handlerAnswer(c telebot.Context) error {
+	boolValue, err := strconv.ParseBool(c.Data())
 	if err != nil {
 		log.Error("pars bool", zap.Error(err))
 
 		return c.Send("что-то пошло не так...")
 	}
 
-	question := strings.ReplaceAll(c.Message().Text, "Какой правильный ответ на вопрос:\n\n", "")
-	answer := "Ложь"
-	if boolValue {
-		answer = "Правда"
+	l.mu.Lock()
+	act, ok := l.waitText[c.Sender().ID]
+	l.mu.Unlock()
+
+	if !ok {
+		return errors.New("answer: not found wait")
 	}
 
-	if err := m.storage.AddQuestion(question, boolValue, data[1]); err != nil {
+	act.Answer = boolValue
+
+	keyboard := &telebot.ReplyMarkup{}
+	row := telebot.Row{
+		keyboard.Data("Развернутый ответ", "detailed"),
+		keyboard.Data("Добавить", "add"),
+		keyboard.Data("Отмена", "cancel"),
+	}
+	keyboard.Inline(row)
+
+	return c.Edit(act.String(), keyboard)
+}
+
+func (l *LoTBot) handlerCancel(c telebot.Context) error {
+	if err := c.Bot().Delete(c.Message()); err != nil {
+		log.Error("delete message question", zap.Error(err))
+	}
+
+	l.mu.Lock()
+	delete(l.waitText, c.Sender().ID)
+	l.mu.Unlock()
+
+	return nil
+}
+
+func (l *LoTBot) handlerAdd(c telebot.Context) error {
+	l.mu.Lock()
+	act, ok := l.waitText[c.Sender().ID]
+	if !ok {
+		l.mu.Unlock()
+
+		return errors.New("answer: not found wait")
+	}
+
+	delete(l.waitText, c.Sender().ID)
+	l.mu.Unlock()
+
+	if err := l.storage.AddQuestion(act.Question, act.Answer, act.Detailed, fmt.Sprint(c.Sender().ID)); err != nil {
 		log.Error("add question", zap.Error(err))
 
 		return c.Send("что-то пошло не так...")
 	}
 
-	return c.Send(fmt.Sprintf("Добавлен вопрос:\n\n%s\n\nПравильный ответ: %s", question, answer))
+	return c.Edit("Вопрос добавлен")
 }
 
-func (m *MeBot) handlerTop(c telebot.Context) error {
-	top, err := m.storage.GetTop(c.Message().Chat.ID, topLimit)
+func (l *LoTBot) handlerDetailed(c telebot.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	act, ok := l.waitText[c.Sender().ID]
+	if !ok {
+		return errors.New("answer: not found wait")
+	}
+
+	act.Action = waitDetailed
+
+	return c.Edit("Ожидаю развернутый ответ в следующем сообщении")
+}
+
+func (l *LoTBot) handlerTop(c telebot.Context) error {
+	top, err := l.storage.GetTop(c.Message().Chat.ID, topLimit)
 	if err != nil {
 		return fmt.Errorf("get top: %v", err)
 	}
@@ -203,7 +267,7 @@ func (m *MeBot) handlerTop(c telebot.Context) error {
 			continue
 		}
 
-		_, err = fmt.Fprintf(&text, "\n%s - %d", getUsername(member.User), item.Value)
+		_, err = fmt.Fprintf(&text, "\n%s - %d", getName(member.User), item.Value)
 		if err != nil {
 			return fmt.Errorf("string build: %v", err)
 		}
@@ -212,16 +276,17 @@ func (m *MeBot) handlerTop(c telebot.Context) error {
 	return c.Send(text.String())
 }
 
-func (m *MeBot) handlerRound(c telebot.Context) error {
-	m.mu.RLock()
-	if _, ok := m.rounds[c.Chat().ID]; ok {
-		m.mu.RUnlock()
+//nolint:funlen
+func (l *LoTBot) handlerRound(c telebot.Context) error {
+	l.mu.RLock()
+	if _, ok := l.rounds[c.Chat().ID]; ok {
+		l.mu.RUnlock()
 
 		return c.Send("Раунд уже идёт")
 	}
-	m.mu.RUnlock()
+	l.mu.RUnlock()
 
-	question, answer, err := m.storage.GetQuestion()
+	question, answer, detailed, err := l.storage.GetQuestion()
 	if err != nil {
 		return fmt.Errorf("get question: %v", err)
 	}
@@ -233,7 +298,7 @@ func (m *MeBot) handlerRound(c telebot.Context) error {
 	}
 	keyboard.Inline(row)
 
-	msg, err := m.bot.Send(c.Chat(), question, keyboard)
+	msg, err := l.bot.Send(c.Chat(), question, keyboard)
 	if err != nil {
 		return fmt.Errorf("send question: %v", err)
 	}
@@ -259,12 +324,12 @@ func (m *MeBot) handlerRound(c telebot.Context) error {
 		case <-timer.C:
 		}
 
-		if err := m.bot.Delete(msg); err != nil {
+		if err := l.bot.Delete(msg); err != nil {
 			log.Error("delete question message", zap.Error(err))
 		}
 
 		if len(answers) == 0 {
-			if _, err := m.bot.Send(c.Chat(), "В этом раунде нет активных участников"); err != nil {
+			if _, err := l.bot.Send(c.Chat(), "В этом раунде нет активных участников"); err != nil {
 				log.Error("send result round", zap.Error(err))
 			}
 
@@ -272,8 +337,9 @@ func (m *MeBot) handlerRound(c telebot.Context) error {
 		}
 
 		var (
-			right strings.Builder
-			wrong strings.Builder
+			right        strings.Builder
+			wrong        strings.Builder
+			textDetailed string
 		)
 
 		mu.RLock()
@@ -286,7 +352,7 @@ func (m *MeBot) handlerRound(c telebot.Context) error {
 			}
 
 			if ans == answer {
-				if err := m.storage.IncValue(c.Chat().ID, uID); err != nil {
+				if err := l.storage.IncValue(c.Chat().ID, uID); err != nil {
 					log.Error("inc pointer", zap.Error(err))
 				}
 
@@ -299,38 +365,48 @@ func (m *MeBot) handlerRound(c telebot.Context) error {
 		}
 		mu.RUnlock()
 
-		if _, err := m.bot.Send(c.Chat(),
-			fmt.Sprintf("Правильно ответили:%s\n\nНеправильно ответили:%s", right.String(), wrong.String()),
+		correctAnswer := "Ложь"
+		if answer {
+			correctAnswer = "Правда"
+		}
+
+		if detailed != "" {
+			textDetailed = fmt.Sprintf("\n\n%s", detailed)
+		}
+
+		if _, err := l.bot.Send(c.Chat(),
+			fmt.Sprintf("Вопрос:\n%s\n\nПравильный ответ: %s%s\n\nПравильно ответили:%s\n\nНеправильно ответили:%s",
+				question, correctAnswer, textDetailed, right.String(), wrong.String()),
 		); err != nil {
 			log.Error("send result round", zap.Error(err))
 		}
 
-		m.mu.Lock()
-		delete(m.rounds, c.Chat().ID)
-		m.mu.Unlock()
+		l.mu.Lock()
+		delete(l.rounds, c.Chat().ID)
+		l.mu.Unlock()
 	}()
 
-	m.mu.Lock()
-	m.rounds[c.Chat().ID] = &entry{
+	l.mu.Lock()
+	l.rounds[c.Chat().ID] = &round{
 		cancel: cancelFunc,
 		vote:   vote,
 	}
-	m.mu.Unlock()
+	l.mu.Unlock()
 
 	return nil
 }
 
-func (m *MeBot) handlerVote(c telebot.Context) error {
+func (l *LoTBot) handlerVote(c telebot.Context) error {
 	boolValue, err := strconv.ParseBool(c.Data())
 	if err != nil {
 		return fmt.Errorf("pars bool: %v", err)
 	}
 
-	m.mu.RLock()
-	if e, ok := m.rounds[c.Chat().ID]; ok {
+	l.mu.RLock()
+	if e, ok := l.rounds[c.Chat().ID]; ok {
 		e.vote(c.Sender().ID, boolValue)
 	}
-	m.mu.RUnlock()
+	l.mu.RUnlock()
 
 	return nil
 }

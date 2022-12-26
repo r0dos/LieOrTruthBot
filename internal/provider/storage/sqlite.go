@@ -28,9 +28,9 @@ const (
 	sqlAdminsINSERT = `INSERT INTO admins (user_id) VALUES (?) 
                              ON CONFLICT DO NOTHING;`
 	sqlAdminsEXISTS    = `SELECT EXISTS(SELECT 1 FROM admins WHERE user_id=?);`
-	sqlQuestionsINSERT = `INSERT INTO questions (question, answer, user_id) VALUES (?, ?, ?)
+	sqlQuestionsINSERT = `INSERT INTO questions (question, answer, detailed, user_id) VALUES (?, ?, ?, ?)
                             ON CONFLICT DO NOTHING;`
-	sqlQuestionSELECTRandom = `SELECT question, answer FROM questions
+	sqlQuestionSELECTRandom = `SELECT question, answer, detailed FROM questions
                         		ORDER BY random()
 								LIMIT 1;`
 )
@@ -54,7 +54,7 @@ func up(db *sql.DB) error {
 	return nil
 }
 
-func (s *anyStorage) AddAdmin(userID int64) error {
+func (s *AnyStorage) AddAdmin(userID int64) error {
 	_, err := s.pool.Exec(sqlAdminsINSERT, userID)
 	if err != nil {
 		return fmt.Errorf("insert: %v", err)
@@ -63,7 +63,7 @@ func (s *anyStorage) AddAdmin(userID int64) error {
 	return nil
 }
 
-func (s *anyStorage) CheckAdmin(userID int64) (bool, error) {
+func (s *AnyStorage) CheckAdmin(userID int64) (bool, error) {
 	var value int64
 
 	if err := s.pool.QueryRow(sqlAdminsEXISTS, userID).Scan(&value); err != nil {
@@ -77,14 +77,14 @@ func (s *anyStorage) CheckAdmin(userID int64) (bool, error) {
 	return false, nil
 }
 
-func (s *anyStorage) AddQuestion(question string, answer bool, userID string) error {
+func (s *AnyStorage) AddQuestion(question string, answer bool, detailed, userID string) error {
 	var ans int
 
 	if answer {
 		ans = 1
 	}
 
-	_, err := s.pool.Exec(sqlQuestionsINSERT, question, ans, userID)
+	_, err := s.pool.Exec(sqlQuestionsINSERT, question, ans, detailed, userID)
 	if err != nil {
 		return fmt.Errorf("insert: %v", err)
 	}
@@ -92,7 +92,7 @@ func (s *anyStorage) AddQuestion(question string, answer bool, userID string) er
 	return nil
 }
 
-func (s *anyStorage) GetTop(chatID, limit int64) ([]dto.ChartItem, error) {
+func (s *AnyStorage) GetTop(chatID, limit int64) ([]dto.ChartItem, error) {
 	rows, err := s.pool.Query(sqlChatUserSELECTTop, chatID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("select top: %v", err)
@@ -114,24 +114,25 @@ func (s *anyStorage) GetTop(chatID, limit int64) ([]dto.ChartItem, error) {
 	return chart, nil
 }
 
-func (s *anyStorage) GetQuestion() (string, bool, error) {
+func (s *AnyStorage) GetQuestion() (string, bool, string, error) {
 	var (
 		question string
 		answer   int
+		detailed string
 	)
 
-	if err := s.pool.QueryRow(sqlQuestionSELECTRandom).Scan(&question, &answer); err != nil {
-		return "", false, fmt.Errorf("select: %v", err)
+	if err := s.pool.QueryRow(sqlQuestionSELECTRandom).Scan(&question, &answer, &detailed); err != nil {
+		return "", false, "", fmt.Errorf("select: %v", err)
 	}
 
 	if answer == 1 {
-		return question, true, nil
+		return question, true, detailed, nil
 	}
 
-	return question, false, nil
+	return question, false, detailed, nil
 }
 
-func (s *anyStorage) IncValue(chatID, userID int64) error {
+func (s *AnyStorage) IncValue(chatID, userID int64) error {
 	_, err := s.pool.Exec(sqlChatUserUPSERT, chatID, userID)
 	if err != nil {
 		return fmt.Errorf("insert: %v", err)

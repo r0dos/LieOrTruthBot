@@ -9,8 +9,8 @@ import (
 	"gopkg.in/telebot.v3/middleware"
 )
 
-func (m *MeBot) registerMiddlewares() {
-	m.bot.Use(middleware.Recover(func(err error) {
+func (l *LoTBot) registerMiddlewares() {
+	l.bot.Use(middleware.Recover(func(err error) {
 		log.Error("me bot in panic", zap.Error(err))
 	}), middleware.AutoRespond())
 }
@@ -18,6 +18,16 @@ func (m *MeBot) registerMiddlewares() {
 func middlewareFromGroup(next telebot.HandlerFunc) telebot.HandlerFunc {
 	return func(c telebot.Context) error {
 		if !c.Message().FromGroup() {
+			return nil
+		}
+
+		return next(c)
+	}
+}
+
+func middlewareFromPM(next telebot.HandlerFunc) telebot.HandlerFunc {
+	return func(c telebot.Context) error {
+		if c.Message().FromGroup() || c.Message().FromChannel() {
 			return nil
 		}
 

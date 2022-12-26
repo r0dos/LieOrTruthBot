@@ -90,7 +90,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("init telebot: %v", err)
 	}
 
-	service := bot.NewMeBot(cfg, b, stor)
+	service := bot.NewLoTBot(cfg, b, stor)
 
 	go service.Start()
 	defer service.Close()
