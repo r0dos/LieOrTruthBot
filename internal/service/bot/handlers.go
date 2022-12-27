@@ -328,6 +328,10 @@ func (l *LoTBot) handlerRound(c telebot.Context) error {
 			log.Error("delete question message", zap.Error(err))
 		}
 
+		l.mu.Lock()
+		delete(l.rounds, c.Chat().ID)
+		l.mu.Unlock()
+
 		if len(answers) == 0 {
 			if _, err := l.bot.Send(c.Chat(), "В этом раунде нет активных участников"); err != nil {
 				log.Error("send result round", zap.Error(err))
@@ -340,6 +344,10 @@ func (l *LoTBot) handlerRound(c telebot.Context) error {
 			right        strings.Builder
 			wrong        strings.Builder
 			textDetailed string
+			isRight      bool
+			isWrong      bool
+			textRight    string
+			textWrong    string
 		)
 
 		mu.RLock()
@@ -357,11 +365,13 @@ func (l *LoTBot) handlerRound(c telebot.Context) error {
 				}
 
 				_, _ = fmt.Fprintf(&right, "\n%s", getUsername(member.User))
+				isRight = true
 
 				continue
 			}
 
 			_, _ = fmt.Fprintf(&wrong, "\n%s", getUsername(member.User))
+			isWrong = true
 		}
 		mu.RUnlock()
 
@@ -374,17 +384,22 @@ func (l *LoTBot) handlerRound(c telebot.Context) error {
 			textDetailed = fmt.Sprintf("\n\n%s", detailed)
 		}
 
+		if isRight {
+			textRight = fmt.Sprintf("\n\nПравильно ответили:%s", right.String())
+		}
+
+		if isWrong {
+			textWrong = fmt.Sprintf("\n\nНеправильно ответили:%s", wrong.String())
+		}
+
 		if _, err := l.bot.Send(c.Chat(),
-			fmt.Sprintf("||%s||\n\nПравильный ответ: ||%s||%s\n\nПравильно ответили:%s\n\nНеправильно ответили:%s",
-				escapedCharacter(question), correctAnswer, textDetailed, right.String(), wrong.String()),
+			fmt.Sprintf("||%s||\n\nПравильный ответ: ||%s||%s%s%s",
+				escapedCharacter(question), correctAnswer, escapedCharacter(textDetailed),
+				escapedCharacter(textRight), escapedCharacter(textWrong)),
 			telebot.ModeMarkdownV2,
 		); err != nil {
 			log.Error("send result round", zap.Error(err))
 		}
-
-		l.mu.Lock()
-		delete(l.rounds, c.Chat().ID)
-		l.mu.Unlock()
 	}()
 
 	l.mu.Lock()
