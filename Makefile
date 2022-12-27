@@ -34,3 +34,6 @@ docker_run:
 	-v $(pwd)/data:/persis \
 	--env DB_URL=/persis/lot_bot.sqlite \
 	-d lotbot
+
+.PHONY: start_docker
+start_docker: docker docker_run
