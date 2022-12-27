@@ -375,8 +375,9 @@ func (l *LoTBot) handlerRound(c telebot.Context) error {
 		}
 
 		if _, err := l.bot.Send(c.Chat(),
-			fmt.Sprintf("Вопрос:\n%s\n\nПравильный ответ: %s%s\n\nПравильно ответили:%s\n\nНеправильно ответили:%s",
+			fmt.Sprintf("||%s||\n\nПравильный ответ: ||%s||%s\n\nПравильно ответили:%s\n\nНеправильно ответили:%s",
 				question, correctAnswer, textDetailed, right.String(), wrong.String()),
+			telebot.ModeMarkdownV2,
 		); err != nil {
 			log.Error("send result round", zap.Error(err))
 		}
