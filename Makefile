@@ -35,5 +35,9 @@ docker_run:
 	--env DB_URL=/persis/lot_bot.sqlite \
 	-d lotbot
 
-.PHONY: start_docker
-start_docker: docker docker_run
+.PHONY: docker_stop
+docker_stop:
+	docker stop lotbot
+
+.PHONY: restart_docker
+restart_docker: docker_stop docker docker_run
