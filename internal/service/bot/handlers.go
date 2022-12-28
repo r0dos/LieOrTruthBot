@@ -36,7 +36,7 @@ func (l *LoTBot) registerHandlers() {
 	pmOnly.Handle("/id", l.handlerID)
 
 	// Command: /admin
-	pmOnly.Handle("/admin", l.handlerAddAdmin)
+	l.bot.Handle("/admin", l.handlerAddAdmin)
 
 	// Command: /question
 	pmOnly.Handle("/question", l.handlerQuestion)
