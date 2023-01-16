@@ -2,7 +2,7 @@ package app
 
 import (
 	"LieOrTruthBot/internal/config"
-	"LieOrTruthBot/internal/provider/storage"
+	"LieOrTruthBot/internal/repository/storage"
 	"LieOrTruthBot/internal/service/bot"
 	"LieOrTruthBot/pkg/log"
 	"context"
@@ -41,7 +41,7 @@ func App() {
 	}()
 
 	if err := run(ctx); err != nil {
-		log.Fatal("run", zap.Error(err))
+		log.Panic("run", zap.Error(err))
 	}
 }
 

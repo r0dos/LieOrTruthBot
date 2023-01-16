@@ -61,6 +61,10 @@ func Fatal(message string, fields ...zap.Field) {
 	zapLogger.Fatal(message, fields...)
 }
 
+func Panic(message string, fields ...zap.Field) {
+	zapLogger.Panic(message, fields...)
+}
+
 type ctxLogger struct{}
 
 // ContextWithLogger adds logger to context
