@@ -29,6 +29,9 @@ func (l *LoTBot) registerHandlers() {
 	// Command: /ping
 	l.bot.Handle("/ping", l.handlerPong)
 
+	// Command: /start
+	l.bot.Handle("/start", l.handlerStart)
+
 	pmOnly := l.bot.Group()
 	pmOnly.Use(middlewareFromPM)
 
@@ -58,6 +61,12 @@ func (l *LoTBot) registerHandlers() {
 
 	//Command: /help
 	l.bot.Handle("/help", l.handlerHelp)
+}
+
+func (l *LoTBot) handlerStart(c telebot.Context) error {
+	return c.Send("Бот для игры Правда/Лож.\n"+
+		"Добавляете в группу и отправляете команду /round@LieOrTruthBot\n"+
+		"и вы в игре ;)", telebot.ModeMarkdown)
 }
 
 func (l *LoTBot) handlerHelp(c telebot.Context) error {
