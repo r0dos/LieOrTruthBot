@@ -4,7 +4,6 @@ alter table questions
     add detailed TEXT default '';
 
 -- +goose Down
-begin;
 
 create table questions_dg_tmp
 (
@@ -27,5 +26,3 @@ alter table questions_dg_tmp
 
 create unique index questions_question_uindex
     on questions (question);
-
-commit;

@@ -1,6 +1,4 @@
 -- +goose Up
-begin;
-
 create table chat_user_dg_tmp
 (
     chat_id    integer                            not null,
@@ -25,10 +23,7 @@ create index chat_id_index
 create unique index chat_user_chat_id_user_id_uindex
     on chat_user (chat_id, user_id);
 
-commit;
-
 -- +goose Down
-begin;
 
 create table chat_user_dg_tmp
 (
@@ -56,5 +51,3 @@ create unique index chat_user_chat_id_user_id_uindex
 
 create index chat_id_index
     on chat_user (chat_id);
-
-commit;
