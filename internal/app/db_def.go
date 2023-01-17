@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // driver
 	"go.uber.org/zap"
 )
 
