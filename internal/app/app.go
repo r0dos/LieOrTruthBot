@@ -9,17 +9,15 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
-	"gopkg.in/yaml.v3"
 )
 
 const (
-	configPath = "config.yml"
+	configPath = "configs/config.yml"
 
 	pollerTimeout = 10 * time.Second
 
@@ -49,21 +47,9 @@ func run(ctx context.Context) error {
 	log.Initialize()
 	defer log.Sync()
 
-	pwd, err := os.Getwd()
+	cfg, err := config.NewConfig(configPath)
 	if err != nil {
-		return fmt.Errorf("get project work dir: %v", err)
-	}
-
-	path := filepath.Join(pwd, configPath)
-
-	bytes, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read config file path %s: %v", path, err)
-	}
-
-	cfg := &config.Config{}
-	if err := yaml.Unmarshal(bytes, cfg); err != nil {
-		return fmt.Errorf("unmarshal config: %v", err)
+		return fmt.Errorf("read config: %w", err)
 	}
 
 	db, err := initDB(os.Getenv(envDBPath))

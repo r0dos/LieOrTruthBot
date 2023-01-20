@@ -17,5 +17,5 @@
 
 .idea
 *.sqlite
-config.yml
+configs/config.yml
 log.json
